@@ -1,10 +1,14 @@
 #!/usr/bin/perl
 use warnings;
 use strict;
+use Redis;
 use Cache::Memcached::Fast;
 use Date::Parse;
 use POSIX qw(strftime);
+
 my $memd = new Cache::Memcached::Fast({servers => [ { address => 'localhost:11211'}]});
+my $redis = Redis->new(reconnect => 60);
+
 
 #print $memd->server_versions;
  
@@ -12,19 +16,29 @@ my $memd = new Cache::Memcached::Fast({servers => [ { address => 'localhost:1121
 use List::Util qw[min max];
 $|=1;
 
-use ZeroMQ qw/:all/;
 
-my $cxt = ZeroMQ::Context->new;
-my $sock = $cxt->socket(ZMQ_SUB);
-$sock->connect('tcp://relay-eu-uk-1.eve-emdr.com:8050');
-$sock->setsockopt(ZMQ_SUBSCRIBE, "");
+use ZMQ::LibZMQ3;
+use ZMQ::Constants qw/ZMQ_SUB ZMQ_SUBSCRIBE/;
+
+
+
+my $context = zmq_init(1);
+my $sock = zmq_socket($context, ZMQ_SUB);
+zmq_connect($sock, "tcp://localhost:8050");
+zmq_setsockopt($sock,ZMQ_SUBSCRIBE, "");
+
+
+
+
+
 my $region='forge';
 while (1) {
-    my $msg = $sock->recv();
+    my $msg=zmq_recvmsg($sock);
+
     last unless defined $msg;
 
     use Compress::Zlib;
-    my $json = uncompress($msg->data);
+    my $json = uncompress(zmq_msg_data($msg));
 
     use JSON;
     my $data = decode_json($json);
@@ -99,6 +113,7 @@ while (1) {
                }
               my $fiveAverageBuyPrice=$boughtPrice/$bought;
                $memd->set($region.'buy-'.$typeid,sprintf("%.2f",$fiveAverageBuyPrice)."|".$numberOfBuyItems."|".$fivePercent."|".$when);
+               $redis->set($region.'buy-'.$typeid=>sprintf("%.2f",$fiveAverageBuyPrice)."|".$numberOfBuyItems."|".$fivePercent."|".$when);
         }
     }
 }
